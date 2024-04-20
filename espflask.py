@@ -68,7 +68,7 @@ def process_request(request: bytes):
 
 class Request:
     def __init__(self, conn: socket.socket, address: tuple[str, int], method: bytes, path: bytes, http_version: bytes, headers: dict, path_args: dict, request_body: bytes, logs=True) -> None:
-        self.address, self.method, self.path, self.http_version, self.headers, self.path_args, self.request_body, self.connection, self.logs = address, method, path, http_version, headers, path_args, request_body, conn, logs
+        self.address, self.method, self.path, self.http_version, self.request_headers, self.path_args, self.request_body, self.connection, self.logs = address, method, path, http_version, headers, path_args, request_body, conn, logs
         self.headers = {"Server": "ESPFlask", "Connection": "close"}
 
     def finish(self, content: str, status_code: int = 200, status_text: str = "OK"):
@@ -76,8 +76,7 @@ class Request:
             self.connection.send(construct_response(
                 status_code, status_text, content, self.headers))
             if self.logs:
-                print(f"I: HTTP/1.1 {self.method.decode()}"
-                      f"{self.path.decode()} - {status_code} {status_text}")
+                print(f"I: HTTP/1.1 {self.method.decode()} {self.path.decode()} - {status_code} {status_text}")
             self.connection.close()
         except:
             pass
@@ -115,7 +114,7 @@ class BaseWebApp:
             self.handler(request)
             return
         except Exception as e:
-            request.abort(500, "Internal Server Error")
+            request.abort(500, "Internal Server Error"+str(type(e))+str(e))
             return
 
     def run(self, port: int, host: str = "0.0.0.0", listen_number: int = 5):
