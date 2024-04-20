@@ -2,7 +2,7 @@ import network  # type: ignore
 import time
 import socket
 import _thread
-VERSION = (0, 1, 2)
+VERSION = (0, 1, 3)
 
 
 def connect_to_ap(ssid: str, password: str = "", timeout: int = 10):
