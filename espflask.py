@@ -2,7 +2,7 @@ import network  # type: ignore
 import time
 import socket
 import _thread
-VERSION = (0, 1, 3)
+VERSION = (0, 1, 4)
 
 
 def connect_to_ap(ssid: str, password: str = "", timeout: int = 10):
@@ -128,6 +128,7 @@ class BaseWebApp:
                 _thread.start_new_thread(self._connected, (conn, addr))
             except:
                 print(f"W: Server overload!")
+                Request(conn, *(['']*7)).abort(503,"Service Temporarily Unavailable")
 
 
 class ESPFlask:
@@ -135,13 +136,26 @@ class ESPFlask:
         self.appname = appname
         self.routes = {}
 
-    def route(self, method, path) -> None:
+    def route(self, method, path):
         def decorator(func):
             if path in self.routes.keys():
                 self.routes[path][method] = func
             else:
                 self.routes[path] = {method: func}
         return decorator
+    
+    def get(self, path):
+        return self.route("GET", path)
+    def post(self, path):
+        return self.route("POST", path)
+    def put(self, path):
+        return self.route("PUT", path)
+    def post(self, path):
+        return self.route("POST", path)
+    def delete(self, path):
+        return self.route("DELETE", path)
+    def head(self, path):
+        return self.route("HEAD", path)
 
     def _router(self, request: Request):
         if request.path.decode() not in self.routes.keys():
