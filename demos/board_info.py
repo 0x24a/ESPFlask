@@ -2,7 +2,7 @@ from espflask import ESPFlask, Request
 import espflask
 from time import time
 app=ESPFlask("BoardInfo")
-@app.route("GET", "/")
+@app.get("/")
 def info(request: Request):
     request.headers.update({"Content-Type":"text/html"})
     return request.finish("""
