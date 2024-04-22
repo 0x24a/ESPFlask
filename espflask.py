@@ -2,7 +2,7 @@ import network  # type: ignore
 import time
 import socket
 import _thread
-VERSION = (0, 1, 4)
+VERSION = (0, 1, 5)
 
 
 def connect_to_ap(ssid: str, password: str = "", timeout: int = 10):
@@ -19,6 +19,13 @@ def connect_to_ap(ssid: str, password: str = "", timeout: int = 10):
             time.sleep(1)
     raise TimeoutError("Failed to connect to AP")
 
+def create_ap(ssid: str, password: str = ""):
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    if password:
+        ap.config(essid=ssid, password=password)
+    else:
+        ap.config(essid=ssid)
 
 def construct_response(status_code: int, status_message: str, content: str, headers: dict = {"Server": "ESPFlask", "Connection": "close"}):
     response = b"HTTP/1.1 "
@@ -67,25 +74,31 @@ def process_request(request: bytes):
 
 
 class Request:
-    def __init__(self, conn: socket.socket, address: tuple[str, int], method: bytes, path: bytes, http_version: bytes, headers: dict, path_args: dict, request_body: bytes, logs=True) -> None:
-        self.address, self.method, self.path, self.http_version, self.request_headers, self.path_args, self.request_body, self.connection, self.logs = address, method, path, http_version, headers, path_args, request_body, conn, logs
+    def __init__(self, connection: socket.socket, address: tuple[str, int], method: bytes, path: bytes, http_version: bytes, headers: dict, path_args: dict, request_body: bytes, logs=True) -> None:
+        self.connection, self.address, self.method, self.path, self.http_version, self.request_headers, self.path_args, self.request_body, self.logs = connection, address, method, path, http_version, headers, path_args, request_body, logs
         self.headers = {"Server": "ESPFlask", "Connection": "close"}
 
-    def finish(self, content: str, status_code: int = 200, status_text: str = "OK"):
-        try:
-            self.connection.send(construct_response(
-                status_code, status_text, content, self.headers))
-            if self.logs:
-                print(f"I: HTTP/1.1 {self.method.decode()} {self.path.decode()} - {status_code} {status_text}")
-            self.connection.close()
-        except:
-            pass
+class Response:
+    def __init__(self, content: str, status_code: int = 200, status_text: str = "OK", headers: dict = {"Server": "ESPFlask", "Connection": "close"}) -> None:
+        self.content = content
+        self.status_code = status_code
+        self.status_text = status_text
+        self.headers = headers
+    def construct_response(self):
+        return construct_response(self.status_code, self.status_text, self.content, self.headers)
 
-    def abort(self, error_code: int = 500, status_text: str = "Internal Server Error"):
-        self.headers.update({"Content-Type": "text/html; charset=utf-8"})
-        self.finish(f"<html><head><title>{error_code} {status_text}</title></head><body><center><h1>{error_code} {status_text}</h1></center><hr><center>ESPFlask/{'.'.join(map(str, VERSION))}</center></body></html>",
-                    error_code,
-                    status_text=status_text)
+def abort(error_code: int = 500, status_text: str = "Internal Server Error") -> Response:
+    response = Response(
+        content=f"<html><head><title>{error_code} {status_text}</title></head><body><center><h1>{error_code} {status_text}</h1></center><hr><center>ESPFlask/{'.'.join(map(str, VERSION))}</center></body></html>",
+        status_code=error_code,
+        status_text=status_text
+    )
+    return response
+
+def redirect(path: str, code: int = 301):
+    response = abort(code, "Redirected")
+    response.headers.update({"Location": path})
+    return response
 
 
 class BaseWebApp:
@@ -114,7 +127,9 @@ class BaseWebApp:
             self.handler(request)
             return
         except Exception as e:
-            request.abort(500, "Internal Server Error"+str(type(e))+str(e))
+            print("W: Error in handler: ",str(type(e)),str(e))
+            request.connection.send(abort(500, "Internal Server Error").construct_response())
+            request.connection.close()
             return
 
     def run(self, port: int, host: str = "0.0.0.0", listen_number: int = 5):
@@ -128,7 +143,8 @@ class BaseWebApp:
                 _thread.start_new_thread(self._connected, (conn, addr))
             except:
                 print(f"W: Server overload!")
-                Request(conn, *(['']*7)).abort(503,"Service Temporarily Unavailable")
+                conn.send(abort(503,"Service Temporarily Unavailable").construct_response())
+                conn.close()
 
 
 class ESPFlask:
@@ -136,33 +152,53 @@ class ESPFlask:
         self.appname = appname
         self.routes = {}
 
-    def route(self, method, path):
+    def route(self, path, methods=["GET"]):
         def decorator(func):
             if path in self.routes.keys():
-                self.routes[path][method] = func
+                for method in methods:
+                    self.routes[path][method] = func
             else:
-                self.routes[path] = {method: func}
+                for method in methods:
+                    self.routes[path] = {method: func}
         return decorator
     
     def get(self, path):
-        return self.route("GET", path)
+        return self.route(path)
     def post(self, path):
-        return self.route("POST", path)
+        return self.route(path, methods=["POST"])
     def put(self, path):
-        return self.route("PUT", path)
-    def post(self, path):
-        return self.route("POST", path)
+        return self.route(path, methods=["PUT"])
     def delete(self, path):
-        return self.route("DELETE", path)
+        return self.route(path, methods=["DELETE"])
     def head(self, path):
-        return self.route("HEAD", path)
+        return self.route(path, methods=["HEAD"])
 
     def _router(self, request: Request):
         if request.path.decode() not in self.routes.keys():
-            return request.abort(404, "Not Found")
+            print(f"I: {request.method.decode()} {request.path.decode()} - 404 Not Found")
+            request.connection.send(abort(404, "Not Found").construct_response())
+            return request.connection.close()
         if request.method.decode() not in self.routes[request.path.decode()].keys():
-            return request.abort(400, "Forbidden")
-        self.routes[request.path.decode()][request.method.decode()](request)
+            print(f"I: {request.method.decode()} {request.path.decode()} - 400 Method Not Allowed")
+            request.connection.send(abort(400, "Method Not Allowed").construct_response())
+            return request.connection.close()
+        response = self.routes[request.path.decode()][request.method.decode()](request)
+        if type(response) == str:
+            response = Response(response)
+        elif type(response) == tuple:
+            if len(response) != 3:
+                print("W: Invaild view function response")
+                response = abort(500, "Internal Server Error")
+            else:
+                response = Response(response[2], response[0], response[1])
+        elif type(response) == Response:
+            pass
+        else:
+            print("W: Invaild view function response")
+            response = abort(500, "Internal Server Error")
+        print(f"I: {request.method.decode()} {request.path.decode()} - {response.status_code} {response.status_text}")
+        request.connection.send(response.construct_response())
+        request.connection.close()
 
     def run(self, port: int, host: str = "0.0.0.0", listen_number: int = 5):
         runner = BaseWebApp(self.appname)
