@@ -2,7 +2,7 @@ import network  # type: ignore
 import time
 import socket
 import _thread
-VERSION = (0, 1, 5)
+VERSION = (0, 1, 6)
 
 
 def connect_to_ap(ssid: str, password: str = "", timeout: int = 10):
@@ -151,6 +151,9 @@ class ESPFlask:
     def __init__(self, appname) -> None:
         self.appname = appname
         self.routes = {}
+        self.before_request_functions = []
+        self.before_response_functions = []
+        # self.error_handlers: dict[int,list] = {}
 
     def route(self, path, methods=["GET"]):
         def decorator(func):
@@ -160,6 +163,7 @@ class ESPFlask:
             else:
                 for method in methods:
                     self.routes[path] = {method: func}
+            return func
         return decorator
     
     def get(self, path):
@@ -172,15 +176,42 @@ class ESPFlask:
         return self.route(path, methods=["DELETE"])
     def head(self, path):
         return self.route(path, methods=["HEAD"])
+    # def errorhandler(self, error_code: int):
+    #     def decorator(func):
+    #         if error_code in self.error_handlers.keys():
+    #             self.error_handlers[error_code].append(func)
+    #         else:
+    #             self.error_handlers[error_code]=[func]
+    #         return func
+    #     return decorator
+    def before_request(self, func):
+        self.before_request_functions.append(func)
+        def decorator(*args, **kwargs):
+            func(*args, **kwargs)
+        return decorator
+    
+    def before_response(self, func):
+        self.before_response_functions.append(func)
+        def decorator(*args, **kwargs):
+            func(*args, **kwargs)
+        return decorator
 
     def _router(self, request: Request):
+        for function in self.before_request_functions:
+            function(request)
         if request.path.decode() not in self.routes.keys():
             print(f"I: {request.method.decode()} {request.path.decode()} - 404 Not Found")
-            request.connection.send(abort(404, "Not Found").construct_response())
+            response=abort(404, "Not Found")
+            for function in self.before_response_functions:
+                function(request, response)
+            request.connection.send(response.construct_response())
             return request.connection.close()
         if request.method.decode() not in self.routes[request.path.decode()].keys():
             print(f"I: {request.method.decode()} {request.path.decode()} - 400 Method Not Allowed")
-            request.connection.send(abort(400, "Method Not Allowed").construct_response())
+            response=abort(400, "Method Not Allowed")
+            for function in self.before_response_functions:
+                function(request, response)
+            request.connection.send(response.construct_response())
             return request.connection.close()
         response = self.routes[request.path.decode()][request.method.decode()](request)
         if type(response) == str:
@@ -197,6 +228,9 @@ class ESPFlask:
             print("W: Invaild view function response")
             response = abort(500, "Internal Server Error")
         print(f"I: {request.method.decode()} {request.path.decode()} - {response.status_code} {response.status_text}")
+        for function in self.before_response_functions:
+            function(request, response)
+        print(response.construct_response())
         request.connection.send(response.construct_response())
         request.connection.close()
 
