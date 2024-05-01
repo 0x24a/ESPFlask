@@ -1,31 +1,42 @@
-import network  # type: ignore
 import time
 import socket
 import _thread
+ONBOARD=True
+try:
+    import network  # type: ignore
+except:
+    ONBOARD=False
+    print("W: Disabled connect_to_ap and create_ap due to the module is not running on the board")
 VERSION = (0, 1, 6)
 
 
 def connect_to_ap(ssid: str, password: str = "", timeout: int = 10):
-    interface = network.WLAN(network.STA_IF)
-    interface.active(True)
-    if password:
-        interface.connect(ssid, password)
-    else:
-        interface.connect(ssid)
-    for _ in range(timeout):
-        if interface.isconnected():
-            return interface
+    if ONBOARD:
+        interface = network.WLAN(network.STA_IF)
+        interface.active(True)
+        if password:
+            interface.connect(ssid, password)
         else:
-            time.sleep(1)
-    raise TimeoutError("Failed to connect to AP")
+            interface.connect(ssid)
+        for _ in range(timeout):
+            if interface.isconnected():
+                return interface
+            else:
+                time.sleep(1)
+        raise TimeoutError("Failed to connect to AP")
+    else:
+        print("W: Ignored connect_to_ap request due to the module is not running on the board")
 
 def create_ap(ssid: str, password: str = ""):
-    ap = network.WLAN(network.AP_IF)
-    ap.active(True)
-    if password:
-        ap.config(essid=ssid, password=password)
+    if ONBOARD:
+        ap = network.WLAN(network.AP_IF)
+        ap.active(True)
+        if password:
+            ap.config(essid=ssid, password=password)
+        else:
+            ap.config(essid=ssid)
     else:
-        ap.config(essid=ssid)
+        print("W: Ignored create_ap request due to the module is not running on the board")
 
 def construct_response(status_code: int, status_message: str, content: str, headers: dict = {"Server": "ESPFlask", "Connection": "close"}):
     response = b"HTTP/1.1 "
@@ -230,7 +241,6 @@ class ESPFlask:
         print(f"I: {request.method.decode()} {request.path.decode()} - {response.status_code} {response.status_text}")
         for function in self.before_response_functions:
             function(request, response)
-        print(response.construct_response())
         request.connection.send(response.construct_response())
         request.connection.close()
 
