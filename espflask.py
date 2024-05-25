@@ -1,6 +1,8 @@
 import time
 import socket
 import _thread
+import json
+
 ONBOARD=True
 try:
     import network  # type: ignore
@@ -233,6 +235,8 @@ class ESPFlask:
                 response = abort(500, "Internal Server Error")
             else:
                 response = Response(response[2], response[0], response[1])
+        elif type(response) == dict:
+            response = Response(json.dumps(response))
         elif type(response) == Response:
             pass
         else:
